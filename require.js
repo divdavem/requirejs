@@ -13,6 +13,7 @@ var requirejs, require, define;
     var req, s, head, baseElement, dataMain, src,
         mainScript, subPath,
         version = '2.1.0',
+        defineWrapperRegExp = /^\s*define\s*\(/,
         commentRegExp = /(\/\*([\s\S]*?)\*\/|([^:]|^)\/\/(.*)$)/mg,
         cjsRequireRegExp = /[^.]\s*require\s*\(\s*["']([^'"\s]+)["']\s*\)/g,
         jsSuffixRegExp = /\.js$/,
@@ -1519,9 +1520,15 @@ var requirejs, require, define;
                     var moduleName = this.moduleName;
                     var error = (xhr.status != 200);
                     var errorDetails = xhr.statusText;
+                    var jsCode = xhr.responseText;
                     if (!error) {
                         try{
-                            req.exec(xhr.responseText);
+                            if (!defineWrapperRegExp.test(jsCode.replace(commentRegExp,''))) {
+                                jsCode = ['define(function(require,exports,module){\n',jsCode,'\n});\n//@ sourceURL=', this.url].join('');
+                            } else {
+                                jsCode = [jsCode, '\n//@ sourceURL=', this.url].join('');
+                            }
+                            req.exec(jsCode);
                         } catch (e){
                             error = true;
                             errorDetails = ''+e;
@@ -1668,13 +1675,14 @@ var requirejs, require, define;
     };
 
     var HTTPRequestObject = global.XMLHttpRequest;
+    var newXMLHttpRequest;
     if (HTTPRequestObject) {
-        function newXMLHttpRequest() {
+        newXMLHttpRequest = function() {
             return new HTTPRequestObject();
         }
     } else {
         HTTPRequestObject = global.ActiveXObject;
-        function newXMLHttpRequest() {
+        newXMLHttpRequest = function() {
             return new HTTPRequestObject("Microsoft.XMLHTTP");
         }
     }
@@ -1693,7 +1701,8 @@ var requirejs, require, define;
         xhr.open('GET', url, true);
         xhr.onreadystatechange = bind({
             moduleName: moduleName,
-            xhr: xhr
+            xhr: xhr,
+            url: url
         }, context.onScriptLoad);
         xhr.send(null);
     };
