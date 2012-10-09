@@ -11,7 +11,7 @@
 var requirejs, require, define;
 (function (global) {
     var req, s, head, baseElement, dataMain, src,
-        interactiveScript, currentlyAddingScript, mainScript, subPath,
+        mainScript, subPath,
         version = '2.1.0',
         commentRegExp = /(\/\*([\s\S]*?)\*\/|([^:]|^)\/\/(.*)$)/mg,
         cjsRequireRegExp = /[^.]\s*require\s*\(\s*["']([^'"\s]+)["']\s*\)/g,
@@ -36,8 +36,7 @@ var requirejs, require, define;
         isOpera = typeof opera !== 'undefined' && opera.toString() === '[object Opera]',
         contexts = {},
         cfg = {},
-        globalDefQueue = [],
-        useInteractive = false;
+        globalDefQueue = [];
 
     function isFunction(it) {
         return ostring.call(it) === '[object Function]';
@@ -346,22 +345,9 @@ var requirejs, require, define;
             return name;
         }
 
-        function removeScript(name) {
-            if (isBrowser) {
-                each(scripts(), function (scriptNode) {
-                    if (scriptNode.getAttribute('data-requiremodule') === name &&
-                            scriptNode.getAttribute('data-requirecontext') === context.contextName) {
-                        scriptNode.parentNode.removeChild(scriptNode);
-                        return true;
-                    }
-                });
-            }
-        }
-
         function hasPathFallback(id) {
             var pathConfig = config.paths[id];
             if (pathConfig && isArray(pathConfig) && pathConfig.length > 1) {
-                removeScript(id);
                 //Pop off the first array value, since it failed, and
                 //retry
                 pathConfig.shift();
@@ -644,7 +630,6 @@ var requirejs, require, define;
                             stillLoading = true;
                         } else {
                             noLoads.push(modId);
-                            removeScript(modId);
                         }
                     } else if (!mod.inited && mod.fetched && map.isDefine) {
                         stillLoading = true;
@@ -985,8 +970,7 @@ var requirejs, require, define;
                     load.fromText = bind(this, function (text, textAlt) {
                         /*jslint evil: true */
                         var moduleName = map.name,
-                            moduleMap = makeModuleMap(moduleName),
-                            hasInteractive = useInteractive;
+                            moduleMap = makeModuleMap(moduleName);
 
                         //As of 2.1.0, support just passing the text, to reinforce
                         //fromText only being called once per resource. Still
@@ -994,12 +978,6 @@ var requirejs, require, define;
                         //that moduleName in favor of the internal ref.
                         if (textAlt) {
                             text = textAlt;
-                        }
-
-                        //Turn off interactive script matching for IE for any define
-                        //calls in the text, then turn it back on at the end.
-                        if (hasInteractive) {
-                            useInteractive = false;
                         }
 
                         //Prime the system by creating a module instance for
@@ -1011,10 +989,6 @@ var requirejs, require, define;
                         } catch (e) {
                             throw new Error('fromText eval for ' + moduleName +
                                             ' failed: ' + e);
-                        }
-
-                        if (hasInteractive) {
-                            useInteractive = true;
                         }
 
                         //Mark this as a dependency for the plugin
@@ -1128,43 +1102,6 @@ var requirejs, require, define;
 
         function callGetModule(args) {
             getModule(makeModuleMap(args[0], null, true)).init(args[1], args[2]);
-        }
-
-        function removeListener(node, func, name, ieName) {
-            //Favor detachEvent because of IE9
-            //issue, see attachEvent/addEventListener comment elsewhere
-            //in this file.
-            if (node.detachEvent && !isOpera) {
-                //Probably IE. If not it will throw an error, which will be
-                //useful to know.
-                if (ieName) {
-                    node.detachEvent(ieName, func);
-                }
-            } else {
-                node.removeEventListener(name, func, false);
-            }
-        }
-
-        /**
-         * Given an event from a script node, get the requirejs info from it,
-         * and then removes the event listeners on the node.
-         * @param {Event} evt
-         * @returns {Object}
-         */
-        function getScriptData(evt) {
-            //Using currentTarget instead of target for Firefox 2.0's sake. Not
-            //all old browsers will be supported, but this one was easy enough
-            //to support and still makes sense.
-            var node = evt.currentTarget || evt.srcElement;
-
-            //Remove the listeners once here.
-            removeListener(node, context.onScriptLoad, 'load', 'onreadystatechange');
-            removeListener(node, context.onScriptError, 'error');
-
-            return {
-                node: node,
-                id: node && node.getAttribute('data-requiremodule')
-            };
         }
 
         context = {
@@ -1574,33 +1511,30 @@ var requirejs, require, define;
 
             /**
              * callback for script loads, used to check status of loading.
-             *
-             * @param {Event} evt the event from the browser for the script
-             * that was loaded.
              */
-            onScriptLoad: function (evt) {
-                //Using currentTarget instead of target for Firefox 2.0's sake. Not
-                //all old browsers will be supported, but this one was easy enough
-                //to support and still makes sense.
-                if (evt.type === 'load' ||
-                        (readyRegExp.test((evt.currentTarget || evt.srcElement).readyState))) {
-                    //Reset interactive script so a script node is not held onto for
-                    //to long.
-                    interactiveScript = null;
-
-                    //Pull out the name of the module and the context.
-                    var data = getScriptData(evt);
-                    context.completeLoad(data.id);
-                }
-            },
-
-            /**
-             * Callback for script errors.
-             */
-            onScriptError: function (evt) {
-                var data = getScriptData(evt);
-                if (!hasPathFallback(data.id)) {
-                    return onError(makeError('scripterror', 'Script error', evt, [data.id]));
+            onScriptLoad: function () {
+                var xhr = this.xhr;
+                if (xhr && xhr.readyState == 4) {
+                    this.xhr = null;
+                    var moduleName = this.moduleName;
+                    var error = (xhr.status != 200);
+                    var errorDetails = xhr.statusText;
+                    if (!error) {
+                        try{
+                            req.exec(xhr.responseText);
+                        } catch (e){
+                            error = true;
+                            errorDetails = ''+e;
+                        }
+                    }
+                    if (error) {
+                        // error
+                        if (!hasPathFallback(moduleName)) {
+                            onError(makeError('scripterror', 'Script error', errorDetails, [moduleName]));
+                        }
+                    } else {
+                        context.completeLoad(moduleName);
+                    }
                 }
             }
         };
@@ -1733,6 +1667,18 @@ var requirejs, require, define;
         throw err;
     };
 
+    var HTTPRequestObject = global.XMLHttpRequest;
+    if (HTTPRequestObject) {
+        function newXMLHttpRequest() {
+            return new HTTPRequestObject();
+        }
+    } else {
+        HTTPRequestObject = global.ActiveXObject;
+        function newXMLHttpRequest() {
+            return new HTTPRequestObject("Microsoft.XMLHTTP");
+        }
+    }
+
     /**
      * Does the request to load a module for the browser case.
      * Make this a separate function to allow other environments
@@ -1743,102 +1689,14 @@ var requirejs, require, define;
      * @param {Object} url the URL to the module.
      */
     req.load = function (context, moduleName, url) {
-        var config = (context && context.config) || {},
-            node;
-        if (isBrowser) {
-            //In the browser so use a script tag
-            node = config.xhtml ?
-                    document.createElementNS('http://www.w3.org/1999/xhtml', 'html:script') :
-                    document.createElement('script');
-            node.type = config.scriptType || 'text/javascript';
-            node.charset = 'utf-8';
-            node.async = true;
-
-            node.setAttribute('data-requirecontext', context.contextName);
-            node.setAttribute('data-requiremodule', moduleName);
-
-            //Set up load listener. Test attachEvent first because IE9 has
-            //a subtle issue in its addEventListener and script onload firings
-            //that do not match the behavior of all other browsers with
-            //addEventListener support, which fire the onload event for a
-            //script right after the script execution. See:
-            //https://connect.microsoft.com/IE/feedback/details/648057/script-onload-event-is-not-fired-immediately-after-script-execution
-            //UNFORTUNATELY Opera implements attachEvent but does not follow the script
-            //script execution mode.
-            if (node.attachEvent &&
-                    //Check if node.attachEvent is artificially added by custom script or
-                    //natively supported by browser
-                    //read https://github.com/jrburke/requirejs/issues/187
-                    //if we can NOT find [native code] then it must NOT natively supported.
-                    //in IE8, node.attachEvent does not have toString()
-                    //Note the test for "[native code" with no closing brace, see:
-                    //https://github.com/jrburke/requirejs/issues/273
-                    !(node.attachEvent.toString && node.attachEvent.toString().indexOf('[native code') < 0) &&
-                    !isOpera) {
-                //Probably IE. IE (at least 6-8) do not fire
-                //script onload right after executing the script, so
-                //we cannot tie the anonymous define call to a name.
-                //However, IE reports the script as being in 'interactive'
-                //readyState at the time of the define call.
-                useInteractive = true;
-
-                node.attachEvent('onreadystatechange', context.onScriptLoad);
-                //It would be great to add an error handler here to catch
-                //404s in IE9+. However, onreadystatechange will fire before
-                //the error handler, so that does not help. If addEvenListener
-                //is used, then IE will fire error before load, but we cannot
-                //use that pathway given the connect.microsoft.com issue
-                //mentioned above about not doing the 'script execute,
-                //then fire the script load event listener before execute
-                //next script' that other browsers do.
-                //Best hope: IE10 fixes the issues,
-                //and then destroys all installs of IE 6-9.
-                //node.attachEvent('onerror', context.onScriptError);
-            } else {
-                node.addEventListener('load', context.onScriptLoad, false);
-                node.addEventListener('error', context.onScriptError, false);
-            }
-            node.src = url;
-
-            //For some cache cases in IE 6-8, the script executes before the end
-            //of the appendChild execution, so to tie an anonymous define
-            //call to the module name (which is stored on the node), hold on
-            //to a reference to this node, but clear after the DOM insertion.
-            currentlyAddingScript = node;
-            if (baseElement) {
-                head.insertBefore(node, baseElement);
-            } else {
-                head.appendChild(node);
-            }
-            currentlyAddingScript = null;
-
-            return node;
-        } else if (isWebWorker) {
-            //In a web worker, use importScripts. This is not a very
-            //efficient use of importScripts, importScripts will block until
-            //its script is downloaded and evaluated. However, if web workers
-            //are in play, the expectation that a build has been done so that
-            //only one script needs to be loaded anyway. This may need to be
-            //reevaluated if other use cases become common.
-            importScripts(url);
-
-            //Account for anonymous modules
-            context.completeLoad(moduleName);
-        }
+        var xhr = newXMLHttpRequest();
+        xhr.open('GET', url, true);
+        xhr.onreadystatechange = bind({
+            moduleName: moduleName,
+            xhr: xhr
+        }, context.onScriptLoad);
+        xhr.send(null);
     };
-
-    function getInteractiveScript() {
-        if (interactiveScript && interactiveScript.readyState === 'interactive') {
-            return interactiveScript;
-        }
-
-        eachReverse(scripts(), function (script) {
-            if (script.readyState === 'interactive') {
-                return (interactiveScript = script);
-            }
-        });
-        return interactiveScript;
-    }
 
     //Look for a data-main script attribute, which could also adjust the baseUrl.
     if (isBrowser) {
@@ -1926,18 +1784,6 @@ var requirejs, require, define;
             }
         }
 
-        //If in IE 6-8 and hit an anonymous define() call, do the interactive
-        //work.
-        if (useInteractive) {
-            node = currentlyAddingScript || getInteractiveScript();
-            if (node) {
-                if (!name) {
-                    name = node.getAttribute('data-requiremodule');
-                }
-                context = contexts[node.getAttribute('data-requirecontext')];
-            }
-        }
-
         //Always save off evaluating the def call until the script onload handler.
         //This allows multiple modules to be in a file without prematurely
         //tracing dependencies, and allows for anonymous module support,
@@ -1954,8 +1800,7 @@ var requirejs, require, define;
 
     /**
      * Executes the text. Normally just uses eval, but can be modified
-     * to use a better, environment-specific call. Only used for transpiling
-     * loader plugins, not for plain JS modules.
+     * to use a better, environment-specific call.
      * @param {String} text the text to execute/evaluate.
      */
     req.exec = function (text) {
